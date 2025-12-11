@@ -22,7 +22,7 @@ def validate_row(row) -> (bool, str):
     for field in required_fields:
         if field not in row or pd.isna(row[field]):
             return False, f"Missing required field: {field}"
-    
+
     # transaction_type enum
     valid_types = ['BANK_TRANSFER', 'CARD_TRANSACTION', 'INVOICE']
     if row['transaction_type'] not in valid_types:
@@ -125,7 +125,7 @@ def flatten_response(response_json: Dict[str, Any]) -> Dict[str, Any]:
     Flattens the nested API response to extract relevant fields.
     """
     flat_data = {}
-    
+
     if 'transaction_id' in response_json:
         flat_data['transaction_id'] = response_json['transaction_id']
 
@@ -133,24 +133,24 @@ def flatten_response(response_json: Dict[str, Any]) -> Dict[str, Any]:
     if 'visual_enrichments' in response_json:
         ve = response_json['visual_enrichments']
         flat_data['clean_name'] = ve.get('merchant_clean_name')
-        flat_data['category'] = ve.get('merchant_category')
         flat_data['logo_url'] = ve.get('merchant_logo_link')
-        flat_data['brand_id'] = ve.get('brand_id')
         flat_data['default_logo'] = ve.get('default_logo')
+        flat_data['updated'] = ve.get('updated')
+        flat_data['brand_id'] = ve.get('brand_id')
 
     # 2. Merchant Location
     if 'merchant_location' in response_json:
         ml = response_json['merchant_location']
         flat_data['location_enabled'] = ml.get('enabled')
         flat_data['location_id'] = ml.get('location_id')
-        
+
         if ml.get('address'):
             addr = ml['address']
             flat_data['location_country'] = addr.get('country')
             flat_data['location_city'] = addr.get('city')
             flat_data['location_street'] = addr.get('street')
             flat_data['location_zip'] = addr.get('zip_code')
-            
+
         if ml.get('coordinates'):
             coords = ml['coordinates']
             flat_data['location_lat'] = coords.get('lat')
@@ -195,7 +195,7 @@ def flatten_response(response_json: Dict[str, Any]) -> Dict[str, Any]:
         flat_data['processor_name'] = pp.get('name')
         flat_data['processor_logo'] = pp.get('logo_url')
         flat_data['processor_brand_id'] = pp.get('brand_id')
-    
+
     return flat_data
 
 
@@ -207,21 +207,21 @@ def enrich_transaction(row: Dict[str, Any], url: str, token: str) -> Dict[str, A
         'Content-Type': 'application/json',
         'Authorization': f'Token {token}'
     }
-    
+
     payload = {
         'merchant_name': row['merchant_name'],
         'transaction_type': row['transaction_type'],
         'transaction_id': str(row['transaction_id'])
     }
-    
+
     # Optional fields
     optional_fields = [
-        'merchant_country', 'merchant_category_code', 'merchant_city', 
-        'merchant_id', 'transaction_timestamp', 'transaction_amount', 
+        'merchant_country', 'merchant_category_code', 'merchant_city',
+        'merchant_id', 'transaction_timestamp', 'transaction_amount',
         'transaction_currency', 'transaction_reference_text', 'account_id',
         'channel_type', 'vat'
     ]
-    
+
     for field in optional_fields:
         if field in row and not pd.isna(row[field]):
             if field == 'transaction_amount':
@@ -249,11 +249,19 @@ def enrich_transaction(row: Dict[str, Any], url: str, token: str) -> Dict[str, A
                     'data': response.json()
                 }
             else:
+                # If the response is HTML, we only keep the status + reason
+                content_type = response.headers.get("Content-Type", "")
+                if "text/html" in content_type:
+                    msg = response.reason or "HTTP error"
+                else:
+                    msg = response.text
+
                 return {
                     'status': 'error',
                     'error_code': response.status_code,
-                    'error_message': response.text
+                    'error_message': msg
                 }
+
 
         except Exception as e:
             if attempt == MAX_RETRIES - 1:
@@ -297,9 +305,9 @@ def main():
     parser.add_argument('-t', '--token', required=True, help='API Token')
     parser.add_argument('-u', '--url', required=True, help='API Endpoint URL')
     parser.add_argument('-w', '--workers', type=int, default=5, help='Number of concurrent workers (threads)')
-    
+
     args = parser.parse_args()
-    
+
     try:
         df = pd.read_csv(
             args.input,
@@ -330,7 +338,7 @@ def main():
         df['enrichment_status'] = None
     if 'enrichment_error' not in df.columns:
         df['enrichment_error'] = None
-        
+
     df['enrichment_status'] = df['enrichment_status'].astype('object')
     df['enrichment_error'] = df['enrichment_error'].astype('object')
 
@@ -365,7 +373,7 @@ def main():
     # Save the updated DataFrame
     try:
         df.to_csv(args.output, index=False)
-        print(f"Done! Results written to {args.output}")
+        print(f"Results written to {args.output}")
     except Exception as e:
         print(f"Error writing output CSV: {e}")
         sys.exit(1)
